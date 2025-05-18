@@ -1,0 +1,6 @@
+
+{
+    "python.pythonPath": "python3",
+    "editor.formatOnSave": true,
+    "files.trimTrailingWhitespace": true
+}
