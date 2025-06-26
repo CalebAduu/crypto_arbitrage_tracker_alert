@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Arbitrage Tracker",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "crypto_arbitrage_tracker_alert.py"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Lint with pylint",
+      "type": "shell",
+      "command": "pylint",
+      "args": [
+        "crypto_arbitrage_tracker_alert.py"
+      ],
+      "group": "test",
+      "presentation": {
+        "reveal": "always"
+      },
+      "problemMatcher": ["$pylint"]
+    }
+  ]
+}
