@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Arbitrage Tracker",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/crypto_arbitrage_tracker_alert.py",
+      "console": "integratedTerminal"
+    }
+  ]
+}
