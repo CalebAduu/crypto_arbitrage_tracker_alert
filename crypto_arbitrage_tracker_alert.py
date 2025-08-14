@@ -1,95 +1,122 @@
 import streamlit as st
 import requests
+from telegram import Bot
 import time
 
-st.set_page_config(page_title="Crypto Arbitrage Tracker", layout="wide")
+# ------------------------
+# Telegram Configuration
+# ------------------------
+TELEGRAM_BOT_TOKEN = "8211027473:AAEwuL0nkumeqqyE8yaH167MtSsbUK6JJfM"
+TELEGRAM_CHAT_ID = "1888691302"
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Binance special cases if needed
-BINANCE_SPECIAL_CASES = {
-    "DOGE": "DOGEUSDT",
-    "SHIB": "SHIBUSDT",
-    # Add more if necessary
+def send_telegram_message(message):
+    try:
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
+    except Exception as e:
+        st.error(f"Error sending Telegram message: {e}")
+
+# ------------------------
+# Exchange API URLs
+# ------------------------
+EXCHANGE_API_URLS = {
+    "Binance": "https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT",
+    "KuCoin": "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT",
+    "Bybit": "https://api.bybit.com/v2/public/tickers?symbol={symbol}USDT",
+    "Gate.io": "https://api.gateio.ws/api2/1/ticker/{symbol}_USDT",
+    "CoinEx": "https://api.coinex.com/v1/market/ticker?market={symbol}_USDT",
+    "XT": "https://api.xt.com/data/v1/ticker?symbol={symbol}_USDT",
+    "Bitget": "https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol}_USDT",
+    "HTX": "https://api.htx.com/api/v1/market/detail?symbol={symbol}_USDT",
+    "BingX": "https://api.bingx.com/api/v1/market/ticker?symbol={symbol}_USDT",
+    "BitMart": "https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT"
 }
 
-def get_binance_price(symbol):
+# ------------------------
+# Top 20 Cryptos
+# ------------------------
+TOP_20_CRYPTOS = ["BTC","ETH","BNB","XRP","ADA","DOGE","USDT","DOT","UNI","LTC",
+                  "BCH","LINK","XLM","VET","TRX","EOS","FIL","AAVE","ATOM","SOL"]
+
+# ------------------------
+# Fetch Price Function
+# ------------------------
+def fetch_price(exchange, symbol):
     try:
-        symbol = BINANCE_SPECIAL_CASES.get(symbol, symbol.upper() + "USDT")
-        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-        data = requests.get(url, timeout=5).json()
-        if 'code' in data:  # error from Binance API
+        url = EXCHANGE_API_URLS.get(exchange)
+        if not url:
             return None
-        return float(data['price']) if 'price' in data else None
+        response = requests.get(url.format(symbol=symbol), timeout=5)
+        if response.status_code != 200:
+            return None
+        data = response.json()
+        # Parsing price depending on exchange
+        if exchange == "Binance":
+            return float(data['price'])
+        elif exchange == "KuCoin":
+            return float(data['data']['price'])
+        elif exchange == "Bybit":
+            return float(data['result'][0]['last_price'])
+        elif exchange == "Gate.io":
+            return float(data['last'])
+        elif exchange == "CoinEx":
+            return float(data['data']['ticker']['last'])
+        elif exchange == "XT":
+            return float(data['ticker']['last'])
+        elif exchange == "Bitget":
+            return float(data['data']['last'])
+        elif exchange == "HTX":
+            return float(data['data']['close'])
+        elif exchange == "BingX":
+            return float(data['data']['last'])
+        elif exchange == "BitMart":
+            return float(data['data']['tickers'][0]['last_price'])
+        else:
+            return None
     except:
         return None
 
-def get_coinbase_price(symbol):
-    try:
-        url = f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot"
-        data = requests.get(url, timeout=5).json()
-        return float(data['data']['amount']) if 'data' in data else None
-    except:
-        return None
+# ------------------------
+# Streamlit App
+# ------------------------
+st.set_page_config(page_title="Crypto Arbitrage Monitor", layout="wide")
+st.title("Crypto Arbitrage Monitor")
+st.write("Monitoring top 20 cryptocurrencies across multiple exchanges.")
 
-def get_kraken_price(symbol):
-    try:
-        special_cases = {"BTC": "XBT", "DOGE": "XDG", "USDT": "USDTZ"}
-        kraken_symbol = special_cases.get(symbol, symbol)
-        url = f"https://api.kraken.com/0/public/Ticker?pair={kraken_symbol}USD"
-        data = requests.get(url, timeout=5).json()
-        if 'result' in data and len(data['result']) > 0:
-            pair = list(data['result'].keys())[0]
-            return float(data['result'][pair]['c'][0])
-        return None
-    except:
-        return None
+# Display refresh interval
+refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 10, 300, 60)
 
-def get_top_cryptos(limit=20):
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "market_cap_desc",
-            "per_page": limit,
-            "page": 1,
-            "sparkline": "false"
-        }
-        response = requests.get(url, timeout=5, params=params)
-        return response.json()
-    except:
-        return []
+# Main loop
+if 'last_run' not in st.session_state:
+    st.session_state.last_run = 0
 
-def calculate_spread(prices):
-    values = [v for v in prices.values() if v is not None]
-    if not values:
-        return 0
-    return max(values) - min(values)
+if time.time() - st.session_state.last_run > refresh_interval:
+    st.session_state.last_run = time.time()
+    table_data = []
 
-st.title("📊 Crypto Prices & Exchange Spreads")
+    for crypto in TOP_20_CRYPTOS:
+        row = {"Crypto": crypto}
+        prices = {}
+        for exchange in EXCHANGE_API_URLS.keys():
+            price = fetch_price(exchange, crypto)
+            if price:
+                prices[exchange] = price
+                row[exchange] = price
+            else:
+                row[exchange] = None
+        if prices:
+            min_price = min(prices.values())
+            max_price = max(prices.values())
+            spread = (max_price - min_price) / min_price * 100
+            row["Spread %"] = round(spread, 2)
 
-cryptos = get_top_cryptos(limit=20)
+            if spread >= 1:
+                msg = f"🚨 Arbitrage Opportunity: {crypto}\nBuy: ${min_price:.2f}\nSell: ${max_price:.2f}\nSpread: {spread:.2f}%"
+                send_telegram_message(msg)
+        else:
+            row["Spread %"] = None
 
-table_data = []
+        table_data.append(row)
 
-for crypto in cryptos:
-    name = crypto['name']
-    symbol = crypto['symbol'].upper()
-    
-    binance = get_binance_price(symbol)
-    coinbase = get_coinbase_price(symbol)
-    kraken = get_kraken_price(symbol)
-    
-    prices = {"Binance": binance, "Coinbase": coinbase, "Kraken": kraken}
-    spread = calculate_spread(prices)
-    
-    table_data.append({
-        "Crypto": name,
-        "Binance": binance,
-        "Coinbase": coinbase,
-        "Kraken": kraken,
-        "Spread": spread
-    })
-
-st.table(table_data)
-
-st.markdown("Data updates each time the app reruns. Refresh the page for latest prices.")
+    st.table(table_data)
 
