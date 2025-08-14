@@ -1,74 +1,104 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
+import itertools
 import time
-from itertools import combinations
 
-st.set_page_config(page_title="Crypto Arbitrage Tracker", layout="wide")
+st.set_page_config(page_title="Crypto Exchange Spread Tracker", layout="wide")
 
-# List of exchanges and their public endpoints (futures)
-EXCHANGES = {
-    "Binance": lambda symbol: f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}USDT",
-    "KuCoin": lambda symbol: f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT",
-    "Gateio": lambda symbol: f"https://api.gateio.ws/api2/1/tickers/{symbol}_USDT",
-    "Bybit": lambda symbol: f"https://api.bybit.com/v2/public/tickers?symbol={symbol}USDT",
-    "BitMart": lambda symbol: f"https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT",
-    # Add more exchanges here if they have public endpoints
+EXCHANGES = ["Binance", "KuCoin", "Gateio", "BitMart"]  # add more
+TOP_N = 20  # top 20 cryptos
+
+# Mapping of symbols for exchanges if needed
+SYMBOL_OVERRIDES = {"BTC": "BTC", "ETH": "ETH", "SOL": "SOL"}
+
+# Functions to get prices from each exchange
+def get_binance_price(symbol):
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
+        data = requests.get(url).json()
+        return float(data['price'])
+    except:
+        return None
+
+def get_kucoin_price(symbol):
+    try:
+        url = f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT"
+        data = requests.get(url).json()
+        return float(data['data']['price'])
+    except:
+        return None
+
+def get_gateio_price(symbol):
+    try:
+        url = f"https://api.gateio.ws/api2/1/ticker/{symbol}_USDT"
+        data = requests.get(url).json()
+        return float(data['last'])
+    except:
+        return None
+
+def get_bitmart_price(symbol):
+    try:
+        url = f"https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT"
+        data = requests.get(url).json()
+        return float(data['data'][0]['last_price'])
+    except:
+        return None
+
+EXCHANGE_FUNCS = {
+    "Binance": get_binance_price,
+    "KuCoin": get_kucoin_price,
+    "Gateio": get_gateio_price,
+    "BitMart": get_bitmart_price
 }
 
-# Top 20 cryptos symbols for futures (example)
-TOP_20_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "DOT", "AVAX", "MATIC",
-                  "LTC", "TRX", "LINK", "ATOM", "ETC", "NEAR", "ALGO", "FTM", "VET", "FIL"]
+# Get top cryptos from CoinGecko
+def get_top_cryptos(n=TOP_N):
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": n, "page": 1, "sparkline": "false"}
+    data = requests.get(url, params=params).json()
+    return [coin['symbol'].upper() for coin in data]
 
-def fetch_price(exchange, symbol):
-    try:
-        url = EXCHANGES[exchange](symbol)
-        response = requests.get(url, timeout=5).json()
-        # Parse response per exchange
-        if exchange == "Binance":
-            return float(response.get('price', 0))
-        elif exchange == "KuCoin":
-            return float(response.get('data', {}).get('price', 0))
-        elif exchange == "Gateio":
-            return float(response.get('last', 0)) if isinstance(response, dict) else float(response[0]['last'])
-        elif exchange == "Bybit":
-            return float(response.get('result', [{}])[0].get('last_price', 0))
-        elif exchange == "BitMart":
-            return float(response.get('data', {}).get('tickers', [{}])[0].get('last_price', 0))
-        return 0
-    except:
-        return 0
+def fetch_prices():
+    cryptos = get_top_cryptos()
+    rows = []
 
-def get_spreads(prices_dict):
-    """Compute spreads between every pair of exchanges"""
-    spreads = []
-    for ex1, ex2 in combinations(prices_dict.keys(), 2):
-        p1 = prices_dict[ex1]
-        p2 = prices_dict[ex2]
-        if p1 > 0 and p2 > 0:
-            spread = abs(p1 - p2) / min(p1, p2) * 100
-            spreads.append((ex1, ex2, round(spread, 2)))
-    return spreads
+    for symbol in cryptos:
+        row = {"Crypto": symbol}
+        prices = {}
+        for exchange in EXCHANGES:
+            func = EXCHANGE_FUNCS.get(exchange)
+            if func:
+                price = func(symbol)
+                row[exchange] = price if price is not None else np.nan
+                prices[exchange] = price
+        # Compute all exchange-to-exchange spreads
+        spread_list = []
+        for ex1, ex2 in itertools.combinations(EXCHANGES, 2):
+            p1 = prices.get(ex1)
+            p2 = prices.get(ex2)
+            if p1 and p2:
+                spread = abs(p1 - p2)
+                spread_list.append(f"{ex1}-{ex2}: {spread:.2f}")
+        row["Spreads"] = ", ".join(spread_list)
+        rows.append(row)
 
-st.title("Crypto Futures Arbitrage Tracker (Top 20)")
+    df = pd.DataFrame(rows)
+    # Ensure all numeric columns are floats
+    for ex in EXCHANGES:
+        df[ex] = df[ex].fillna(0.0).astype(float)
+    return df
 
-refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 5, 60, 10)
+st.title("Crypto Exchange Spread Tracker")
+
+# Auto-refresh every 30 seconds
+REFRESH_INTERVAL = 30
+placeholder = st.empty()
 
 while True:
-    table_data = []
-    for symbol in TOP_20_SYMBOLS:
-        prices = {ex: fetch_price(ex, symbol) for ex in EXCHANGES}
-        spreads = get_spreads(prices)
-        max_spread = max([s[2] for s in spreads], default=0)
-        table_data.append({
-            "Crypto": symbol,
-            **prices,
-            "Max Spread (%)": max_spread,
-            "Spreads": spreads
-        })
-
-    df = pd.DataFrame(table_data)
-    st.dataframe(df, use_container_width=True)
-
-    time.sleep(refresh_interval)
-    st.experimental_rerun()
+    df = fetch_prices()
+    with placeholder.container():
+        st.dataframe(df)
+        st.write(f"Last update: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    time.sleep(REFRESH_INTERVAL)
