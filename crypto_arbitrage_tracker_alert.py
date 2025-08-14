@@ -1,26 +1,42 @@
 import streamlit as st
-import requests
 import pandas as pd
-import numpy as np
-import itertools
+import requests
 import time
 
-st.set_page_config(page_title="Crypto Exchange Spread Tracker", layout="wide")
+st.set_page_config(page_title="Crypto Arbitrage Tracker", layout="wide")
 
-EXCHANGES = ["Binance", "KuCoin", "Gateio", "BitMart"]  # add more
-TOP_N = 20  # top 20 cryptos
+# List of exchanges
+EXCHANGES = [
+    "Binance", "HTX", "BingX", "Bybit", "CoinEx", "Bitget", 
+    "MEXC", "LBank", "XT", "BitMart", "KuCoin", "Gate.io", "Kraken"
+]
 
-# Mapping of symbols for exchanges if needed
-SYMBOL_OVERRIDES = {"BTC": "BTC", "ETH": "ETH", "SOL": "SOL"}
-
-# Functions to get prices from each exchange
+# Functions to fetch prices from public APIs
 def get_binance_price(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
-        data = requests.get(url).json()
-        return float(data['price'])
+        return float(requests.get(url).json()['price'])
     except:
         return None
+
+def get_htx_price(symbol):
+    try:
+        url = f"https://api.huobi.pro/market/trade?symbol={symbol.lower()}usdt"
+        data = requests.get(url).json()
+        return float(data['tick']['data'][0]['price'])
+    except:
+        return None
+
+def get_bingx_price(symbol):
+    try:
+        url = f"https://api.bingx.com/api/v1/market/ticker?symbol={symbol}USDT"
+        data = requests.get(url).json()
+        return float(data['data']['lastPrice'])
+    except:
+        return None
+
+# Add other exchange functions here in similar format...
+# Bybit, CoinEx, Bitget, MEXC, LBank, XT, BitMart
 
 def get_kucoin_price(symbol):
     try:
@@ -38,67 +54,74 @@ def get_gateio_price(symbol):
     except:
         return None
 
-def get_bitmart_price(symbol):
+def get_kraken_price(symbol):
     try:
-        url = f"https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT"
+        special_cases = {"BTC": "XBT", "ETH": "ETH", "SOL": "SOL"}
+        kraken_symbol = special_cases.get(symbol, symbol)
+        url = f"https://api.kraken.com/0/public/Ticker?pair={kraken_symbol}USD"
         data = requests.get(url).json()
-        return float(data['data'][0]['last_price'])
+        pair = list(data['result'].keys())[0]
+        return float(data['result'][pair]['c'][0])
     except:
         return None
 
+# Map exchanges to their functions
 EXCHANGE_FUNCS = {
     "Binance": get_binance_price,
+    "HTX": get_htx_price,
+    "BingX": get_bingx_price,
     "KuCoin": get_kucoin_price,
-    "Gateio": get_gateio_price,
-    "BitMart": get_bitmart_price
+    "Gate.io": get_gateio_price,
+    "Kraken": get_kraken_price,
+    # Add other exchanges here...
 }
 
-# Get top cryptos from CoinGecko
-def get_top_cryptos(n=TOP_N):
+# Top 20 cryptos (Coingecko)
+def get_top_20_cryptos():
     url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": n, "page": 1, "sparkline": "false"}
+    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": 20, "page": 1}
     data = requests.get(url, params=params).json()
     return [coin['symbol'].upper() for coin in data]
 
-def fetch_prices():
-    cryptos = get_top_cryptos()
-    rows = []
-
+# Fetch prices for all exchanges and cryptos
+def fetch_all_prices():
+    cryptos = get_top_20_cryptos()
+    all_prices = {}
     for symbol in cryptos:
-        row = {"Crypto": symbol}
-        prices = {}
-        for exchange in EXCHANGES:
-            func = EXCHANGE_FUNCS.get(exchange)
+        all_prices[symbol] = {}
+        for ex in EXCHANGES:
+            func = EXCHANGE_FUNCS.get(ex)
             if func:
-                price = func(symbol)
-                row[exchange] = price if price is not None else np.nan
-                prices[exchange] = price
-        # Compute all exchange-to-exchange spreads
-        spread_list = []
-        for ex1, ex2 in itertools.combinations(EXCHANGES, 2):
-            p1 = prices.get(ex1)
-            p2 = prices.get(ex2)
-            if p1 and p2:
-                spread = abs(p1 - p2)
-                spread_list.append(f"{ex1}-{ex2}: {spread:.2f}")
-        row["Spreads"] = ", ".join(spread_list)
-        rows.append(row)
+                all_prices[symbol][ex] = func(symbol)
+            else:
+                all_prices[symbol][ex] = None
+    return all_prices
 
-    df = pd.DataFrame(rows)
-    # Ensure all numeric columns are floats
-    for ex in EXCHANGES:
-        df[ex] = df[ex].fillna(0.0).astype(float)
-    return df
+# Calculate spreads between all exchange pairs
+def calculate_spreads(prices):
+    spread_data = []
+    for symbol, ex_prices in prices.items():
+        for ex1 in EXCHANGES:
+            for ex2 in EXCHANGES:
+                if ex1 != ex2:
+                    p1 = ex_prices.get(ex1)
+                    p2 = ex_prices.get(ex2)
+                    if p1 and p2:
+                        spread = abs(p1 - p2) / min(p1, p2) * 100
+                        spread_data.append({
+                            "Crypto": symbol,
+                            "Exchange 1": ex1,
+                            "Exchange 2": ex2,
+                            "Price 1": p1,
+                            "Price 2": p2,
+                            "Spread (%)": round(spread, 4)
+                        })
+    return pd.DataFrame(spread_data)
 
-st.title("Crypto Exchange Spread Tracker")
-
-# Auto-refresh every 30 seconds
-REFRESH_INTERVAL = 30
-placeholder = st.empty()
-
+# Streamlit UI
+st.title("Crypto Arbitrage Exchange-to-Exchange Spreads (Top 20 Cryptos)")
 while True:
-    df = fetch_prices()
-    with placeholder.container():
-        st.dataframe(df)
-        st.write(f"Last update: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    time.sleep(REFRESH_INTERVAL)
+    prices = fetch_all_prices()
+    df_spreads = calculate_spreads(prices)
+    st.dataframe(df_spreads)
+    time.sleep(30)  # refresh every 30 seconds
