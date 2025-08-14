@@ -35,17 +35,25 @@ def fetch_price(exchange, symbol):
         url = EXCHANGE_PUBLIC_URLS[exchange].format(symbol=symbol)
         r = requests.get(url, timeout=5)
         data = r.json()
-        # Handling common structures; may need per-exchange tweaks
-        if exchange in ["Binance", "Bybit", "Bitget"]:
-            return float(data['price'] if 'price' in data else data['last_price'])
+        # Default fallback
+        price = None
+
+        if exchange == "Binance":
+            price = float(data['price']) if 'price' in data else None
+        elif exchange == "Bybit":
+            price = float(data['last_price']) if 'last_price' in data else None
+        elif exchange == "Bitget":
+            price = float(data['last']) if 'last' in data else None
         elif exchange in ["MEXC", "CoinEx", "XT", "BitMart", "LBank", "HTX", "BingX"]:
-            return float(data.get('last', 0))
+            price = float(data.get('last', 0))
         elif exchange == "KuCoin":
-            return float(data['data']['last'] if 'data' in data else 0)
+            price = float(data['data']['last'] if 'data' in data else 0)
         elif exchange == "Gateio":
-            return float(data[0]['last'] if isinstance(data, list) and len(data)>0 else 0)
-        else:
-            return None
+            price = float(data[0]['last'] if isinstance(data, list) and len(data) > 0 else 0)
+
+        if price == 0:
+            price = None
+        return price
     except:
         return None
 
@@ -67,14 +75,19 @@ for symbol in TOP_CRYPTO_SYMBOLS:
         price = fetch_price(ex, symbol)
         row[ex] = price
         prices[ex] = price
-    
+
     # Calculate spreads for all exchange pairs
     for ex1, ex2 in combinations(EXCHANGES, 2):
-        if prices.get(ex1) and prices.get(ex2):
-            spread = abs(prices[ex1] - prices[ex2]) / min(prices[ex1], prices[ex2]) * 100
+        p1 = prices.get(ex1)
+        p2 = prices.get(ex2)
+        if p1 is not None and p2 is not None:
+            spread = abs(p1 - p2) / min(p1, p2) * 100
             row[f"{ex1}-{ex2} Spread %"] = round(spread, 2)
+        else:
+            row[f"{ex1}-{ex2} Spread %"] = None
+
     all_data.append(row)
 
 # Show DataFrame in Streamlit
 df = pd.DataFrame(all_data)
-st.dataframe(df, use_container_width=True)
+st.data
