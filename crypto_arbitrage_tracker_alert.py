@@ -1,123 +1,96 @@
 import streamlit as st
 import requests
-from telegram import Bot
-import time
+import pandas as pd
+from itertools import combinations
 
-# ------------------------
-# Telegram Configuration
-# ------------------------
+# ----------------- CONFIG -----------------
 TELEGRAM_BOT_TOKEN = "8211027473:AAEwuL0nkumeqqyE8yaH167MtSsbUK6JJfM"
 TELEGRAM_CHAT_ID = "1888691302"
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+SPREAD_THRESHOLD = 1.0  # percent
+TOP_N_CRYPTOS = 20
 
-def send_telegram_message(message):
-    try:
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-    except Exception as e:
-        st.error(f"Error sending Telegram message: {e}")
+EXCHANGES = [
+    "MEXC", "LBank", "Bybit", "Gateio", "CoinEx",
+    "XT", "Bitget", "KuCoin", "Binance", "HTX",
+    "BingX", "BitMart"
+]
 
-# ------------------------
-# Exchange API URLs
-# ------------------------
-EXCHANGE_API_URLS = {
-    "Binance": "https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT",
-    "KuCoin": "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT",
+# Placeholder URLs for public futures endpoints (replace with real ones)
+EXCHANGE_PUBLIC_URLS = {
+    "MEXC": "https://www.mexc.com/api/v3/futures/ticker/24hr?symbol={symbol}USDT",
+    "LBank": "https://api.lbkex.com/v2/futures/tickers/{symbol}USDT",
     "Bybit": "https://api.bybit.com/v2/public/tickers?symbol={symbol}USDT",
-    "Gate.io": "https://api.gateio.ws/api2/1/ticker/{symbol}_USDT",
-    "CoinEx": "https://api.coinex.com/v1/market/ticker?market={symbol}_USDT",
-    "XT": "https://api.xt.com/data/v1/ticker?symbol={symbol}_USDT",
-    "Bitget": "https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol}_USDT",
-    "HTX": "https://api.htx.com/api/v1/market/detail?symbol={symbol}_USDT",
-    "BingX": "https://api.bingx.com/api/v1/market/ticker?symbol={symbol}_USDT",
-    "BitMart": "https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT"
+    "Gateio": "https://api.gateio.ws/api/v4/futures/usdt/tickers?contract={symbol}_USDT",
+    "CoinEx": "https://api.coinex.com/v1/futures/ticker?symbol={symbol}USDT",
+    "XT": "https://api.xt.com/futures/public/ticker?symbol={symbol}USDT",
+    "Bitget": "https://api.bitget.com/api/mix/v1/market/ticker?symbol={symbol}USDT",
+    "KuCoin": "https://api.kucoin.com/api/v1/contracts/active?symbol={symbol}-USDT",
+    "Binance": "https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}USDT",
+    "HTX": "https://api.huobi.pro/market/detail/merged?symbol={symbol}USDT",
+    "BingX": "https://api.bingx.com/api/v1/futures/ticker?symbol={symbol}USDT",
+    "BitMart": "https://api.bitmart.com/contract/v1/ticker?symbol={symbol}USDT",
 }
 
-# ------------------------
-# Top 20 Cryptos
-# ------------------------
-TOP_20_CRYPTOS = ["BTC","ETH","BNB","XRP","ADA","DOGE","USDT","DOT","UNI","LTC",
-                  "BCH","LINK","XLM","VET","TRX","EOS","FIL","AAVE","ATOM","SOL"]
+# ----------------- HELPER FUNCTIONS -----------------
+def get_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    try:
+        requests.post(url, data=payload)
+    except Exception as e:
+        st.warning(f"Failed to send Telegram message: {e}")
 
-# ------------------------
-# Fetch Price Function
-# ------------------------
 def fetch_price(exchange, symbol):
     try:
-        url = EXCHANGE_API_URLS.get(exchange)
-        if not url:
-            return None
-        response = requests.get(url.format(symbol=symbol), timeout=5)
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        # Parsing price depending on exchange
-        if exchange == "Binance":
-            return float(data['price'])
+        url = EXCHANGE_PUBLIC_URLS[exchange].format(symbol=symbol)
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        # Handling common structures; may need per-exchange tweaks
+        if exchange in ["Binance", "Bybit", "Bitget"]:
+            return float(data['price'] if 'price' in data else data['last_price'])
+        elif exchange in ["MEXC", "CoinEx", "XT", "BitMart", "LBank", "HTX", "BingX"]:
+            # For simplicity, assume 'last' field exists
+            return float(data.get('last', 0))
         elif exchange == "KuCoin":
-            return float(data['data']['price'])
-        elif exchange == "Bybit":
-            return float(data['result'][0]['last_price'])
-        elif exchange == "Gate.io":
-            return float(data['last'])
-        elif exchange == "CoinEx":
-            return float(data['data']['ticker']['last'])
-        elif exchange == "XT":
-            return float(data['ticker']['last'])
-        elif exchange == "Bitget":
-            return float(data['data']['last'])
-        elif exchange == "HTX":
-            return float(data['data']['close'])
-        elif exchange == "BingX":
-            return float(data['data']['last'])
-        elif exchange == "BitMart":
-            return float(data['data']['tickers'][0]['last_price'])
+            return float(data['data']['last'] if 'data' in data else 0)
+        elif exchange == "Gateio":
+            return float(data[0]['last'] if isinstance(data, list) and len(data)>0 else 0)
         else:
             return None
     except:
         return None
 
-# ------------------------
-# Streamlit App
-# ------------------------
-st.set_page_config(page_title="Crypto Arbitrage Monitor", layout="wide")
-st.title("Crypto Arbitrage Monitor")
-st.write("Monitoring top 20 cryptocurrencies across multiple exchanges.")
+# ----------------- MAIN APP -----------------
+st.set_page_config(page_title="Crypto Futures Spread Tracker", layout="wide")
+st.title("Crypto Futures Spread Tracker")
 
-# Display refresh interval
-refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 10, 300, 60)
+# List of top cryptos
+TOP_CRYPTO_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "DOT",
+                      "AVAX", "MATIC", "SHIB", "LTC", "TRX", "ATOM", "LINK",
+                      "ETC", "XMR", "ALGO", "FIL", "VET"][:TOP_N_CRYPTOS]
 
-# Main loop
-if 'last_run' not in st.session_state:
-    st.session_state.last_run = 0
+all_data = []
 
-if time.time() - st.session_state.last_run > refresh_interval:
-    st.session_state.last_run = time.time()
-    table_data = []
+for symbol in TOP_CRYPTO_SYMBOLS:
+    row = {"Crypto": symbol}
+    prices = {}
+    for ex in EXCHANGES:
+        price = fetch_price(ex, symbol)
+        row[ex] = price
+        prices[ex] = price
+    
+    # Calculate spreads for all exchange pairs
+    for ex1, ex2 in combinations(EXCHANGES, 2):
+        if prices.get(ex1) and prices.get(ex2):
+            spread = abs(prices[ex1] - prices[ex2]) / min(prices[ex1], prices[ex2]) * 100
+            row[f"{ex1}-{ex2} Spread %"] = round(spread, 2)
+            
+            # Telegram alert
+            if spread >= SPREAD_THRESHOLD:
+                message = f"Arbitrage Alert: {symbol} | {ex1} vs {ex2} Spread: {spread:.2f}% | Prices: {prices[ex1]:.2f} / {prices[ex2]:.2f}"
+                get_telegram_message(message)
+    all_data.append(row)
 
-    for crypto in TOP_20_CRYPTOS:
-        row = {"Crypto": crypto}
-        prices = {}
-        for exchange in EXCHANGE_API_URLS.keys():
-            price = fetch_price(exchange, crypto)
-            if price:
-                prices[exchange] = price
-                row[exchange] = price
-            else:
-                row[exchange] = None
-        if prices:
-            min_price = min(prices.values())
-            max_price = max(prices.values())
-            spread = (max_price - min_price) / min_price * 100
-            row["Spread %"] = round(spread, 2)
-
-            if spread >= 1:
-                msg = f"🚨 Arbitrage Opportunity: {crypto}\nBuy: ${min_price:.2f}\nSell: ${max_price:.2f}\nSpread: {spread:.2f}%"
-                send_telegram_message(msg)
-        else:
-            row["Spread %"] = None
-
-        table_data.append(row)
-
-    st.table(table_data)
-
-
+# Show DataFrame in Streamlit
+df = pd.DataFrame(all_data)
+st.dataframe(df, use_container_width=True)
