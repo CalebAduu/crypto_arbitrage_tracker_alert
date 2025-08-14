@@ -6,36 +6,25 @@ from itertools import combinations
 # Exchanges to compare
 exchanges = ["binance", "kraken", "coinbase-pro", "bitmart", "kucoin", "gateio"]
 
-# Get top N cryptocurrencies by market cap
+# Get top N cryptocurrencies
 def get_top_cryptos(n=20):
     url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        "vs_currency": "usd",
-        "order": "market_cap_desc",
-        "per_page": n,
-        "page": 1,
-        "sparkline": "false"
-    }
+    params = {"vs_currency": "usd", "order": "market_cap_desc", "per_page": n, "page": 1, "sparkline": "false"}
     response = requests.get(url, params=params).json()
     return [c["id"] for c in response]
 
 # Fetch base prices from CoinGecko
 def get_prices(crypto):
-    url = f"https://api.coingecko.com/api/v3/simple/price"
-    params = {
-        "ids": crypto,
-        "vs_currencies": "usd",
-        "include_24hr_change": "true"
-    }
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {"ids": crypto, "vs_currencies": "usd", "include_24hr_change": "true"}
     response = requests.get(url, params=params).json()
     return response.get(crypto, {})
 
-# Simulate exchange prices for demo (replace with real API calls)
+# Simulate exchange prices (replace with real API calls)
 def simulate_exchange_prices(base_price):
     prices = {}
     for ex in exchanges:
         if base_price is not None:
-            # small variation per exchange
             prices[ex] = round(base_price * (1 + 0.01 * (hash(ex) % 5 - 2)), 2)
         else:
             prices[ex] = None
@@ -47,7 +36,7 @@ def compute_spread(price1, price2):
         return None
     return round(abs(price1 - price2), 2)
 
-# Build table
+# Build table with all exchange pair spreads
 all_rows = []
 top_cryptos = get_top_cryptos(20)
 
@@ -58,7 +47,11 @@ for crypto in top_cryptos:
     
     row = {"Crypto": crypto.capitalize()}
     
-    # Compute spread for every exchange pair
+    # Fill each exchange column
+    for ex in exchanges:
+        row[ex] = exchange_prices[ex]
+    
+    # Fill spread for each pair
     for ex1, ex2 in combinations(exchanges, 2):
         row[f"{ex1} vs {ex2}"] = compute_spread(exchange_prices[ex1], exchange_prices[ex2])
     
@@ -68,4 +61,3 @@ df = pd.DataFrame(all_rows)
 
 st.title("Top 20 Cryptos Exchange Spread Matrix")
 st.dataframe(df)
-
