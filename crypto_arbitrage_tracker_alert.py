@@ -3,11 +3,21 @@ import requests
 import pandas as pd
 from itertools import combinations
 
-# Top cryptocurrencies
-cryptos = ["bitcoin", "ethereum", "solana"]
-
 # Exchanges to compare
 exchanges = ["binance", "kraken", "coinbase-pro", "bitmart", "kucoin", "gateio"]
+
+# Get top N cryptocurrencies by market cap
+def get_top_cryptos(n=20):
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": n,
+        "page": 1,
+        "sparkline": "false"
+    }
+    response = requests.get(url, params=params).json()
+    return [c["id"] for c in response]
 
 # Fetch base prices from CoinGecko
 def get_prices(crypto):
@@ -39,7 +49,9 @@ def compute_spread(price1, price2):
 
 # Build table
 all_rows = []
-for crypto in cryptos:
+top_cryptos = get_top_cryptos(20)
+
+for crypto in top_cryptos:
     prices = get_prices(crypto)
     base_price = prices.get("usd")
     exchange_prices = simulate_exchange_prices(base_price)
@@ -54,5 +66,6 @@ for crypto in cryptos:
 
 df = pd.DataFrame(all_rows)
 
-st.title("Crypto Exchange Spread Matrix")
+st.title("Top 20 Cryptos Exchange Spread Matrix")
 st.dataframe(df)
+
