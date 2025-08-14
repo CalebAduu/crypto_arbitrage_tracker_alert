@@ -1,92 +1,123 @@
-import requests
 import streamlit as st
-import pandas as pd
+import requests
+from telegram import Bot
 import time
 
-# Telegram settings
+# ------------------------
+# Telegram Configuration
+# ------------------------
 TELEGRAM_BOT_TOKEN = "8211027473:AAEwuL0nkumeqqyE8yaH167MtSsbUK6JJfM"
 TELEGRAM_CHAT_ID = "1888691302"
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Exchanges to track
-EXCHANGES = [
-    "MEXC", "LBank", "Bybit", "Gateio", "CoinEx", "XT",
-    "Bitget", "KuCoin", "Binance", "HTX", "BingX", "BitMart"
-]
-
-# Minimum and maximum spread percentage
-MIN_SPREAD = 2
-MAX_SPREAD = 10
-
-# Function to send telegram alert
-def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+def send_telegram_message(message):
     try:
-        requests.post(url, data=payload)
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
     except Exception as e:
-        print(f"Telegram alert failed: {e}")
+        st.error(f"Error sending Telegram message: {e}")
 
-# Placeholder: Replace with real futures API calls for each exchange
-def get_futures_price(exchange, symbol):
-    # Example: here we just return dummy random data for testing
-    # Replace with real exchange API calls
+# ------------------------
+# Exchange API URLs
+# ------------------------
+EXCHANGE_API_URLS = {
+    "Binance": "https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT",
+    "KuCoin": "https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT",
+    "Bybit": "https://api.bybit.com/v2/public/tickers?symbol={symbol}USDT",
+    "Gate.io": "https://api.gateio.ws/api2/1/ticker/{symbol}_USDT",
+    "CoinEx": "https://api.coinex.com/v1/market/ticker?market={symbol}_USDT",
+    "XT": "https://api.xt.com/data/v1/ticker?symbol={symbol}_USDT",
+    "Bitget": "https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol}_USDT",
+    "HTX": "https://api.htx.com/api/v1/market/detail?symbol={symbol}_USDT",
+    "BingX": "https://api.bingx.com/api/v1/market/ticker?symbol={symbol}_USDT",
+    "BitMart": "https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT"
+}
+
+# ------------------------
+# Top 20 Cryptos
+# ------------------------
+TOP_20_CRYPTOS = ["BTC","ETH","BNB","XRP","ADA","DOGE","USDT","DOT","UNI","LTC",
+                  "BCH","LINK","XLM","VET","TRX","EOS","FIL","AAVE","ATOM","SOL"]
+
+# ------------------------
+# Fetch Price Function
+# ------------------------
+def fetch_price(exchange, symbol):
     try:
-        url_map = {
-            "Binance": f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}USDT",
-            # Add real endpoints for other exchanges
-        }
-        url = url_map.get(exchange)
-        if url:
-            data = requests.get(url).json()
+        url = EXCHANGE_API_URLS.get(exchange)
+        if not url:
+            return None
+        response = requests.get(url.format(symbol=symbol), timeout=5)
+        if response.status_code != 200:
+            return None
+        data = response.json()
+        # Parsing price depending on exchange
+        if exchange == "Binance":
             return float(data['price'])
+        elif exchange == "KuCoin":
+            return float(data['data']['price'])
+        elif exchange == "Bybit":
+            return float(data['result'][0]['last_price'])
+        elif exchange == "Gate.io":
+            return float(data['last'])
+        elif exchange == "CoinEx":
+            return float(data['data']['ticker']['last'])
+        elif exchange == "XT":
+            return float(data['ticker']['last'])
+        elif exchange == "Bitget":
+            return float(data['data']['last'])
+        elif exchange == "HTX":
+            return float(data['data']['close'])
+        elif exchange == "BingX":
+            return float(data['data']['last'])
+        elif exchange == "BitMart":
+            return float(data['data']['tickers'][0]['last_price'])
+        else:
+            return None
     except:
         return None
-    # For unimplemented exchanges, return None
-    return None
 
-# Top 20 crypto symbols (common futures symbols)
-TOP_20 = [
-    "BTC", "ETH", "BNB", "XRP", "ADA", "SOL", "DOGE", "DOT", "MATIC", "LTC",
-    "AVAX", "UNI", "SHIB", "LINK", "ATOM", "ALGO", "VET", "FIL", "TRX", "ICP"
-]
+# ------------------------
+# Streamlit App
+# ------------------------
+st.set_page_config(page_title="Crypto Arbitrage Monitor", layout="wide")
+st.title("Crypto Arbitrage Monitor")
+st.write("Monitoring top 20 cryptocurrencies across multiple exchanges.")
 
-st.title("Futures Crypto Arbitrage Tracker")
-st.write(f"Tracking top 20 crypto futures across {len(EXCHANGES)} exchanges")
+# Display refresh interval
+refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 10, 300, 60)
 
-# Streamlit loop
-while True:
-    data = []
-    alerts = []
-    for symbol in TOP_20:
+# Main loop
+if 'last_run' not in st.session_state:
+    st.session_state.last_run = 0
+
+if time.time() - st.session_state.last_run > refresh_interval:
+    st.session_state.last_run = time.time()
+    table_data = []
+
+    for crypto in TOP_20_CRYPTOS:
+        row = {"Crypto": crypto}
         prices = {}
-        for ex in EXCHANGES:
-            price = get_futures_price(ex, symbol)
+        for exchange in EXCHANGE_API_URLS.keys():
+            price = fetch_price(exchange, crypto)
             if price:
-                prices[ex] = price
-        if not prices:
-            continue
+                prices[exchange] = price
+                row[exchange] = price
+            else:
+                row[exchange] = None
+        if prices:
+            min_price = min(prices.values())
+            max_price = max(prices.values())
+            spread = (max_price - min_price) / min_price * 100
+            row["Spread %"] = round(spread, 2)
 
-        max_price = max(prices.values())
-        min_price = min(prices.values())
-        spread_percent = (max_price - min_price) / min_price * 100
+            if spread >= 1:
+                msg = f"🚨 Arbitrage Opportunity: {crypto}\nBuy: ${min_price:.2f}\nSell: ${max_price:.2f}\nSpread: {spread:.2f}%"
+                send_telegram_message(msg)
+        else:
+            row["Spread %"] = None
 
-        row = {"Crypto": symbol}
-        row.update({ex: prices.get(ex, None) for ex in EXCHANGES})
-        row["Spread %"] = round(spread_percent, 2)
-        data.append(row)
+        table_data.append(row)
 
-        # Telegram alert if spread is between min and max threshold
-        if MIN_SPREAD <= spread_percent <= MAX_SPREAD:
-            msg = f"Arbitrage Opportunity: {symbol}\nSpread: {spread_percent:.2f}%\nPrices: {prices}"
-            send_telegram_alert(msg)
-            alerts.append(symbol)
-
-    df = pd.DataFrame(data)
-    st.dataframe(df)
-
-    if alerts:
-        st.success(f"Alerts sent for: {', '.join(alerts)}")
-
-    time.sleep(60)  # update every 60 seconds
+    st.table(table_data)
 
 
