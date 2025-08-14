@@ -4,10 +4,8 @@ import pandas as pd
 from itertools import combinations
 
 # ----------------- CONFIG -----------------
-TELEGRAM_BOT_TOKEN = "8211027473:AAEwuL0nkumeqqyE8yaH167MtSsbUK6JJfM"
-TELEGRAM_CHAT_ID = "1888691302"
-SPREAD_THRESHOLD = 1.0  # percent
 TOP_N_CRYPTOS = 20
+SPREAD_THRESHOLD = 1.0  # percent
 
 EXCHANGES = [
     "MEXC", "LBank", "Bybit", "Gateio", "CoinEx",
@@ -32,14 +30,6 @@ EXCHANGE_PUBLIC_URLS = {
 }
 
 # ----------------- HELPER FUNCTIONS -----------------
-def get_telegram_message(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
-    try:
-        requests.post(url, data=payload)
-    except Exception as e:
-        st.warning(f"Failed to send Telegram message: {e}")
-
 def fetch_price(exchange, symbol):
     try:
         url = EXCHANGE_PUBLIC_URLS[exchange].format(symbol=symbol)
@@ -49,7 +39,6 @@ def fetch_price(exchange, symbol):
         if exchange in ["Binance", "Bybit", "Bitget"]:
             return float(data['price'] if 'price' in data else data['last_price'])
         elif exchange in ["MEXC", "CoinEx", "XT", "BitMart", "LBank", "HTX", "BingX"]:
-            # For simplicity, assume 'last' field exists
             return float(data.get('last', 0))
         elif exchange == "KuCoin":
             return float(data['data']['last'] if 'data' in data else 0)
@@ -64,7 +53,7 @@ def fetch_price(exchange, symbol):
 st.set_page_config(page_title="Crypto Futures Spread Tracker", layout="wide")
 st.title("Crypto Futures Spread Tracker")
 
-# List of top cryptos
+# Top 20 cryptos
 TOP_CRYPTO_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "DOT",
                       "AVAX", "MATIC", "SHIB", "LTC", "TRX", "ATOM", "LINK",
                       "ETC", "XMR", "ALGO", "FIL", "VET"][:TOP_N_CRYPTOS]
@@ -84,11 +73,6 @@ for symbol in TOP_CRYPTO_SYMBOLS:
         if prices.get(ex1) and prices.get(ex2):
             spread = abs(prices[ex1] - prices[ex2]) / min(prices[ex1], prices[ex2]) * 100
             row[f"{ex1}-{ex2} Spread %"] = round(spread, 2)
-            
-            # Telegram alert
-            if spread >= SPREAD_THRESHOLD:
-                message = f"Arbitrage Alert: {symbol} | {ex1} vs {ex2} Spread: {spread:.2f}% | Prices: {prices[ex1]:.2f} / {prices[ex2]:.2f}"
-                get_telegram_message(message)
     all_data.append(row)
 
 # Show DataFrame in Streamlit
