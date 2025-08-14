@@ -1,102 +1,74 @@
 import streamlit as st
-import pandas as pd
 import requests
+import pandas as pd
+import time
 from itertools import combinations
-from streamlit_autorefresh import st_autorefresh
 
-# Auto-refresh every 10 seconds
-st_autorefresh(interval=10*1000, key="crypto_refresh")
+st.set_page_config(page_title="Crypto Arbitrage Tracker", layout="wide")
 
-# Exchanges to fetch
-exchanges = ["binance", "kraken", "coinbase", "kucoin", "gateio", "bitmart"]
-
-# Helper functions for fetching prices
-def get_binance_price(symbol):
-    try:
-        data = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT").json()
-        return float(data['price'])
-    except:
-        return None
-
-def get_coinbase_price(symbol):
-    try:
-        data = requests.get(f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot").json()
-        return float(data['data']['amount'])
-    except:
-        return None
-
-def get_kraken_price(symbol):
-    try:
-        mapping = {"BTC":"XBT", "DOGE":"XDG", "USDT":"USDTZ"}
-        sym = mapping.get(symbol, symbol)
-        data = requests.get(f"https://api.kraken.com/0/public/Ticker?pair={sym}USD").json()
-        pair = list(data['result'].keys())[0]
-        return float(data['result'][pair]['c'][0])
-    except:
-        return None
-
-def get_kucoin_price(symbol):
-    try:
-        data = requests.get(f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT").json()
-        return float(data['data']['price'])
-    except:
-        return None
-
-def get_gateio_price(symbol):
-    try:
-        data = requests.get(f"https://api.gateio.ws/api2/1/ticker/{symbol}_USDT").json()
-        return float(data['last'])
-    except:
-        return None
-
-def get_bitmart_price(symbol):
-    try:
-        data = requests.get(f"https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT").json()
-        return float(data['data']['last_price'])
-    except:
-        return None
-
-# Mapping exchange to fetch function
-exchange_funcs = {
-    "binance": get_binance_price,
-    "coinbase": get_coinbase_price,
-    "kraken": get_kraken_price,
-    "kucoin": get_kucoin_price,
-    "gateio": get_gateio_price,
-    "bitmart": get_bitmart_price
+# List of exchanges and their public endpoints (futures)
+EXCHANGES = {
+    "Binance": lambda symbol: f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}USDT",
+    "KuCoin": lambda symbol: f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol}-USDT",
+    "Gateio": lambda symbol: f"https://api.gateio.ws/api2/1/tickers/{symbol}_USDT",
+    "Bybit": lambda symbol: f"https://api.bybit.com/v2/public/tickers?symbol={symbol}USDT",
+    "BitMart": lambda symbol: f"https://api-cloud.bitmart.com/spot/v1/ticker?symbol={symbol}_USDT",
+    # Add more exchanges here if they have public endpoints
 }
 
-# Fetch top 20 cryptos from CoinGecko
-def get_top_cryptos(n=20):
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {"vs_currency":"usd","order":"market_cap_desc","per_page":n,"page":1,"sparkline":"false"}
-    data = requests.get(url, params=params).json()
-    return [c['symbol'].upper() for c in data]
+# Top 20 cryptos symbols for futures (example)
+TOP_20_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE", "DOT", "AVAX", "MATIC",
+                  "LTC", "TRX", "LINK", "ATOM", "ETC", "NEAR", "ALGO", "FTM", "VET", "FIL"]
 
-# Compute spread between two prices safely
-def compute_spread(p1, p2):
-    if p1 in (None,0) or p2 in (None,0):
-        return None
-    return round(abs(p1 - p2), 2)
+def fetch_price(exchange, symbol):
+    try:
+        url = EXCHANGES[exchange](symbol)
+        response = requests.get(url, timeout=5).json()
+        # Parse response per exchange
+        if exchange == "Binance":
+            return float(response.get('price', 0))
+        elif exchange == "KuCoin":
+            return float(response.get('data', {}).get('price', 0))
+        elif exchange == "Gateio":
+            return float(response.get('last', 0)) if isinstance(response, dict) else float(response[0]['last'])
+        elif exchange == "Bybit":
+            return float(response.get('result', [{}])[0].get('last_price', 0))
+        elif exchange == "BitMart":
+            return float(response.get('data', {}).get('tickers', [{}])[0].get('last_price', 0))
+        return 0
+    except:
+        return 0
 
-# Build the table
-all_rows = []
-top_cryptos = get_top_cryptos(20)
+def get_spreads(prices_dict):
+    """Compute spreads between every pair of exchanges"""
+    spreads = []
+    for ex1, ex2 in combinations(prices_dict.keys(), 2):
+        p1 = prices_dict[ex1]
+        p2 = prices_dict[ex2]
+        if p1 > 0 and p2 > 0:
+            spread = abs(p1 - p2) / min(p1, p2) * 100
+            spreads.append((ex1, ex2, round(spread, 2)))
+    return spreads
 
-for crypto in top_cryptos:
-    row = {"Crypto": crypto}
-    prices = {}
-    for ex in exchanges:
-        prices[ex] = exchange_funcs[ex](crypto)
-        row[ex] = prices[ex]
-    
-    # Compute spreads for all exchange pairs
-    for ex1, ex2 in combinations(exchanges, 2):
-        row[f"{ex1} vs {ex2}"] = compute_spread(prices[ex1], prices[ex2])
-    
-    all_rows.append(row)
+st.title("Crypto Futures Arbitrage Tracker (Top 20)")
 
-df = pd.DataFrame(all_rows)
+refresh_interval = st.sidebar.slider("Refresh interval (seconds)", 5, 60, 10)
 
-st.title("Top 20 Crypto Exchange vs Exchange Spreads")
-st.dataframe(df)
+while True:
+    table_data = []
+    for symbol in TOP_20_SYMBOLS:
+        prices = {ex: fetch_price(ex, symbol) for ex in EXCHANGES}
+        spreads = get_spreads(prices)
+        max_spread = max([s[2] for s in spreads], default=0)
+        table_data.append({
+            "Crypto": symbol,
+            **prices,
+            "Max Spread (%)": max_spread,
+            "Spreads": spreads
+        })
+
+    df = pd.DataFrame(table_data)
+    st.dataframe(df, use_container_width=True)
+
+    time.sleep(refresh_interval)
+    st.experimental_rerun()
